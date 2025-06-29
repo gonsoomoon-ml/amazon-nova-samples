@@ -97,7 +97,8 @@ class ToolProcessor:
         elif tool == "trackordertool":
             # Simulate a long-running operation
             debug_print(f"TrackOrderTool starting operation that will take time...")
-            await asyncio.sleep(10)  # Non-blocking sleep to simulate processing time
+            # await asyncio.sleep(10)  # Non-blocking sleep to simulate processing time
+            await asyncio.sleep(1)  # Non-blocking sleep to simulate processing time
             
             # Extract order ID from toolUseContent
             content = tool_content.get("content", {})
