@@ -15,12 +15,13 @@ const currentPromptInfo = document.getElementById('current-prompt-info');
 // Chat history management
 let chat = { history: [] };
 const chatRef = { current: chat };
+// ChatHistoryManager 콜백 수정
 const chatHistoryManager = ChatHistoryManager.getInstance(
     chatRef,
     (newChat) => {
         chat = { ...newChat };
         chatRef.current = chat;
-        updateChatUI();
+        // updateChatUI() 호출 제거
     }
 );
 
@@ -311,12 +312,38 @@ function base64ToFloat32Array(base64String) {
     return float32Array;
 }
 
-// Handle text output from the server
-function handleTextOutput(data) {
-    chatHistoryManager.addMessage(data.role, data.content);
+// 새로운 메시지만 추가하는 함수
+function addMessageToUI(role, content) {
+    const messageElement = document.createElement('div');
+    messageElement.className = `message ${role.toLowerCase()}`;
+    
+    const roleLabel = document.createElement('div');
+    roleLabel.className = 'role-label';
+    roleLabel.textContent = role;
+    messageElement.appendChild(roleLabel);
+    
+    const contentElement = document.createElement('div');
+    contentElement.className = 'content';
+    contentElement.textContent = content;
+    messageElement.appendChild(contentElement);
+    
+    chatContainer.appendChild(messageElement);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
-// Update the chat UI
+// handleTextOutput 함수 수정
+function handleTextOutput(data) {
+    // ChatHistoryManager 호출 제거
+    // chatHistoryManager.addTextMessage({
+    //     role: data.role,
+    //     message: data.content
+    // });
+    
+    // 직접 UI에만 추가
+    addMessageToUI(data.role, data.content);
+}
+
+// updateChatUI 함수를 다시 활성화
 function updateChatUI() {
     chatContainer.innerHTML = '';
     
@@ -331,7 +358,7 @@ function updateChatUI() {
         
         const contentElement = document.createElement('div');
         contentElement.className = 'content';
-        contentElement.textContent = message.content;
+        contentElement.textContent = message.message; // message 속성 사용
         messageElement.appendChild(contentElement);
         
         chatContainer.appendChild(messageElement);
@@ -430,35 +457,35 @@ socket.on('contentStart', (data) => {
     console.log('Content start received:', data);
 
     if (data.type === 'TEXT') {
-        // Below update will be enabled when role is moved to the contentStart
         role = data.role;
         if (data.role === 'USER') {
-            // When user's text content starts, hide user thinking indicator
             hideUserThinkingIndicator();
         }
         else if (data.role === 'ASSISTANT') {
-            // When assistant's text content starts, hide assistant thinking indicator
             hideAssistantThinkingIndicator();
+            
+            // generationStage 확인 - SPECULATIVE만 표시
             let isSpeculative = false;
             try {
                 if (data.additionalModelFields) {
                     const additionalFields = JSON.parse(data.additionalModelFields);
                     isSpeculative = additionalFields.generationStage === "SPECULATIVE";
                     if (isSpeculative) {
-                        console.log("Received speculative content");
+                        console.log("Received SPECULATIVE content - will display");
                         displayAssistantText = true;
                     }
                     else {
+                        console.log("Received FINAL content - will NOT display");
                         displayAssistantText = false;
                     }
                 }
             } catch (e) {
                 console.error("Error parsing additionalModelFields:", e);
+                displayAssistantText = false; // 파싱 오류 시 표시하지 않음
             }
         }
     }
     else if (data.type === 'AUDIO') {
-        // When audio content starts, we may need to show user thinking indicator
         if (isStreaming) {
             showUserThinkingIndicator();
         }
@@ -470,21 +497,15 @@ socket.on('textOutput', (data) => {
     console.log('Received text output:', data);
 
     if (role === 'USER') {
-        // When user text is received, show thinking indicator for assistant response
         transcriptionReceived = true;
-        //hideUserThinkingIndicator();
-
-        // Add user message to chat
         handleTextOutput({
             role: data.role,
             content: data.content
         });
-
-        // Show assistant thinking indicator after user text appears
         showAssistantThinkingIndicator();
     }
     else if (role === 'ASSISTANT') {
-        //hideAssistantThinkingIndicator();
+        // SPECULATIVE 단계의 텍스트만 표시
         if (displayAssistantText) {
             handleTextOutput({
                 role: data.role,
