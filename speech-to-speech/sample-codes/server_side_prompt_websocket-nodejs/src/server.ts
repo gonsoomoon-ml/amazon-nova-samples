@@ -217,15 +217,11 @@ io.on('connection', (socket) => {
         // Simplified audioInput handler without rate limiting
         socket.on('audioInput', async (audioData) => {
             try {
-                console.log('🎤 Audio input received from client:', socket.id); // ✅ 로그 추가
-                console.log('📊 Audio data length:', typeof audioData === 'string' ? audioData.length : audioData.byteLength); // ✅ 로그 추가
-                
                 // Convert base64 string to Buffer
                 const audioBuffer = typeof audioData === 'string'
                     ? Buffer.from(audioData, 'base64')
                     : Buffer.from(audioData);
 
-                console.log(' Streaming audio to Nova Sonic...'); // ✅ 로그 추가
                 // Stream the audio
                 await session.streamAudio(audioBuffer);
 
@@ -332,7 +328,7 @@ io.on('connection', (socket) => {
                 try {
                     console.log(`Beginning cleanup for abruptly disconnected session: ${socket.id}`);
 
-                    // Add explicit timeouts to avoid hanging promises
+                    // 세션 클린업 타임아웃을 3초에서 10초로 증가
                     const cleanupPromise = Promise.race([
                         (async () => {
                             await session.endAudioContent();
@@ -340,7 +336,7 @@ io.on('connection', (socket) => {
                             await session.close();
                         })(),
                         new Promise((_, reject) =>
-                            setTimeout(() => reject(new Error('Session cleanup timeout')), 3000)
+                            setTimeout(() => reject(new Error('Session cleanup timeout')), 10000) // 3초에서 10초로 증가
                         )
                     ]);
 

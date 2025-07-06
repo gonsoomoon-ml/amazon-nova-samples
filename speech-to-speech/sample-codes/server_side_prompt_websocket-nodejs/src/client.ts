@@ -4,8 +4,6 @@ import {
   InvokeModelWithBidirectionalStreamCommand,
   InvokeModelWithBidirectionalStreamInput,
 } from "@aws-sdk/client-bedrock-runtime";
-import axios from 'axios';
-import https from 'https';
 import {
   NodeHttp2Handler,
   NodeHttp2HandlerOptions,
@@ -23,7 +21,7 @@ import {
   DefaultSystemPrompt,
   DefaultTextConfiguration,
   DefaultToolSchema,
-  WeatherToolSchema
+  ReservationToolSchema
 } from "./consts";
 
 export interface NovaSonicBidirectionalStreamClientConfig {
@@ -172,6 +170,10 @@ export class NovaSonicBidirectionalStreamClient {
   private sessionLastActivity: Map<string, number> = new Map();
   private sessionCleanupInProgress = new Set<string>();
 
+  // 오디오 큐 크기를 늘리고 드롭 로직 개선
+  private audioQueue: Array<{ sessionId: string; audioData: Buffer; timestamp: number }> = [];
+  private readonly MAX_QUEUE_SIZE = 100; // 50에서 100으로 증가
+
 
   constructor(config: NovaSonicBidirectionalStreamClientConfig) {
     const nodeHttp2Handler = new NodeHttp2Handler({
@@ -295,89 +297,154 @@ export class NovaSonicBidirectionalStreamClient {
   }
 
   private async processToolUse(toolName: string, toolUseContent: object): Promise<Object> {
-    const tool = toolName.toLowerCase();
-
-    switch (tool) {
-      case "getdateandtimetool":
-        const date = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
-        const pstDate = new Date(date);
-        return {
-          date: pstDate.toISOString().split('T')[0],
-          year: pstDate.getFullYear(),
-          month: pstDate.getMonth() + 1,
-          day: pstDate.getDate(),
-          dayOfWeek: pstDate.toLocaleString('en-US', { weekday: 'long' }).toUpperCase(),
-          timezone: "PST",
-          formattedTime: pstDate.toLocaleTimeString('en-US', {
-            hour12: true,
-            hour: '2-digit',
-            minute: '2-digit'
-          })
-        };
-      case "getweathertool":
-        console.log(`weather tool`)
-        const parsedContent = await this.parseToolUseContentForWeather(toolUseContent);
-        console.log("parsed content")
-        if (!parsedContent) {
-          throw new Error('parsedContent is undefined');
-        }
-        return this.fetchWeatherData(parsedContent?.latitude, parsedContent?.longitude);
-      default:
-        console.log(`Tool ${tool} not supported`)
-        throw new Error(`Tool ${tool} not supported`);
-    }
-  }
-
-  private async parseToolUseContentForWeather(toolUseContent: any): Promise<{ latitude: number; longitude: number; } | null> {
+    console.log(`Processing tool use: ${toolName}`);
+    console.log(`Tool use content:`, toolUseContent);
+    
     try {
-      // Check if the content field exists and is a string
-      if (toolUseContent && typeof toolUseContent.content === 'string') {
-        // Parse the JSON string into an object
-        const parsedContent = JSON.parse(toolUseContent.content);
-        console.log(`parsedContent ${parsedContent}`)
-        // Return the parsed content
-        return {
-          latitude: parsedContent.latitude,
-          longitude: parsedContent.longitude
-        };
+      switch (toolName) {
+        case "getReservation":
+          const reservationData = await this.parseToolUseContentForReservation(toolUseContent);
+          console.log(`Parsed reservation data:`, reservationData);
+          if (reservationData) {
+            const result = await this.fetchReservationData(reservationData.name);
+            console.log(`Fetch reservation result:`, result);
+            return result;
+          }
+          break;
+        case "getDateAndTimeTool":
+          return {
+            current_date: new Date().toISOString(),
+            message: "Current date and time retrieved successfully"
+          };
+        default:
+          console.log(`Unknown tool: ${toolName}`);
+          return {
+            error: `Unknown tool: ${toolName}`,
+            message: "This tool is not supported"
+          };
       }
-      return null;
     } catch (error) {
-      console.error("Failed to parse tool use content:", error);
-      return null;
-    }
-  }
-
-
-  private async fetchWeatherData(
-    latitude: number,
-    longitude: number
-  ): Promise<Record<string, any>> {
-    const ipv4Agent = new https.Agent({ family: 4 });
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
-
-    try {
-      const response = await axios.get(url, {
-        httpsAgent: ipv4Agent,
-        timeout: 5000,
-        headers: {
-          'User-Agent': 'MyApp/1.0',
-          'Accept': 'application/json'
-        }
-      });
-      const weatherData = response.data;
-      console.log("weatherData:", weatherData);
-
+      console.error(`Error processing tool ${toolName}:`, error);
       return {
-        weather_data: weatherData
+        error: error instanceof Error ? error.message : String(error),
+        message: "An error occurred while processing the tool request"
       };
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error(`Error fetching weather data: ${error.message}`, error);
-      } else {
-        console.error(`Unexpected error: ${error instanceof Error ? error.message : String(error)} `, error);
+    }
+    
+    return {
+      error: "Invalid tool parameters",
+      message: "The tool parameters could not be parsed"
+    };
+  }
+
+  private async parseToolUseContentForReservation(toolUseContent: any): Promise<{ name: string } | null> {
+    try {
+      console.log('parseToolUseContentForReservation input:', toolUseContent);
+      console.log('parseToolUseContentForReservation type:', typeof toolUseContent);
+      
+      // toolUseContent가 객체이고 content 속성이 있는 경우
+      if (toolUseContent && typeof toolUseContent === 'object' && toolUseContent.content) {
+        console.log('Found content property:', toolUseContent.content);
+        if (typeof toolUseContent.content === 'string') {
+          const parsed = JSON.parse(toolUseContent.content);
+          if (parsed.name && typeof parsed.name === 'string') {
+            console.log('Successfully parsed name:', parsed.name);
+            return { name: parsed.name };
+          }
+        }
       }
-      throw error;
+      
+      // 기존 로직 (문자열이나 직접 객체인 경우)
+      if (typeof toolUseContent === 'string') {
+        const parsed = JSON.parse(toolUseContent);
+        if (parsed.name && typeof parsed.name === 'string') {
+          return { name: parsed.name };
+        }
+      } else if (toolUseContent && typeof toolUseContent.name === 'string') {
+        return { name: toolUseContent.name };
+      }
+    } catch (error) {
+      console.error('Error parsing reservation tool content:', error);
+    }
+    return null;
+  }
+
+  // 새로 추가: 호텔 예약 데이터 가져오기 (모의 데이터)
+  private async fetchReservationData(name: string): Promise<Record<string, any>> {
+    // 모의 호텔 예약 데이터
+    const mockReservations = {
+      "Angela Park": {
+        hotel: "Seaview Hotel",
+        checkInDate: "2025-04-12",
+        checkOutDate: "2025-04-15",
+        roomType: "Deluxe Ocean View",
+        reservationId: "RES-2025-001"
+      },
+      "John Smith": {
+        hotel: "Grand Plaza Hotel",
+        checkInDate: "2025-01-15",
+        checkOutDate: "2025-01-18",
+        roomType: "Standard Room",
+        reservationId: "RES-2025-002"
+      },
+      "Sarah Johnson": {
+        hotel: "Mountain Lodge Resort",
+        checkInDate: "2025-03-20",
+        checkOutDate: "2025-03-23",
+        roomType: "Suite",
+        reservationId: "RES-2025-003"
+      },
+      "Gonsoo Moon": {
+        hotel: "Seoul Grand Hotel",
+        checkInDate: "2025-02-10",
+        checkOutDate: "2025-02-13",
+        roomType: "Executive Suite",
+        reservationId: "RES-2025-004"
+      },
+      "YooSung Jeon": {
+        hotel: "Busan Marina Resort",
+        checkInDate: "2025-05-08",
+        checkOutDate: "2025-05-12",
+        roomType: "Ocean View Deluxe",
+        reservationId: "RES-2025-005"
+      },
+      "Kyoung Mi Park": {
+        hotel: "Jeju Island Resort",
+        checkInDate: "2025-06-15",
+        checkOutDate: "2025-06-20",
+        roomType: "Premium Villa",
+        reservationId: "RES-2025-006"
+      },
+      "Tom Lee": {
+        hotel: "Downtown Business Hotel",
+        checkInDate: "2025-03-05",
+        checkOutDate: "2025-03-08",
+        roomType: "Business Suite",
+        reservationId: "RES-2025-007"
+      }
+    };
+
+    // 대소문자 구분 없이 검색
+    const normalizedName = name.toLowerCase().trim();
+    const reservation = Object.entries(mockReservations).find(([key]) => 
+      key.toLowerCase() === normalizedName
+    );
+    
+    if (reservation) {
+      console.log("Reservation found:", reservation[1]);
+      // Nova Sonic이 기대하는 형식으로 반환
+      return {
+        success: true,
+        reservation: reservation[1],
+        message: `Reservation found for ${reservation[0]}`
+      };
+    } else {
+      console.log("No reservation found for:", name);
+      return {
+        success: false,
+        reservation: null,
+        message: `No reservation found for ${name}`
+      };
     }
   }
 
@@ -688,21 +755,16 @@ export class NovaSonicBidirectionalStreamClient {
     });
   }
   public setupPromptStartEvent(sessionId: string): void {
-    console.log(`Setting up prompt start event for session ${sessionId}...`);
+    console.log(`Setting up promptStart events for session ${sessionId}...`);
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
-    // Prompt start event
+
     this.addEventToSessionQueue(sessionId, {
       event: {
         promptStart: {
           promptName: session.promptName,
-          textOutputConfiguration: {
-            mediaType: "text/plain",
-          },
-          audioOutputConfiguration: DefaultAudioOutputConfiguration,
-          toolUseOutputConfiguration: {
-            mediaType: "application/json",
-          },
+          inferenceConfiguration: session.inferenceConfig,
+          audioOutputConfiguration: DefaultAudioOutputConfiguration, // 추가된 부분
           toolConfiguration: {
             tools: [{
               toolSpec: {
@@ -715,10 +777,10 @@ export class NovaSonicBidirectionalStreamClient {
             },
             {
               toolSpec: {
-                name: "getWeatherTool",
-                description: "Get the current weather for a given location, based on its WGS84 coordinates.",
+                name: "getReservation",
+                description: "Get hotel reservation information for a guest by their name.",
                 inputSchema: {
-                  json: WeatherToolSchema
+                  json: ReservationToolSchema
                 }
               }
             }
@@ -788,7 +850,7 @@ export class NovaSonicBidirectionalStreamClient {
     console.log(`[DEBUG] Before setupStartAudioEvent - isAudioContentStartSent: ${session.isAudioContentStartSent}`);
     console.log(`Using audio content ID: ${session.audioContentId}`);
     
-    // Audio content start
+    // Audio content start with both input and output configurations
     this.addEventToSessionQueue(sessionId, {
       event: {
         contentStart: {
@@ -798,6 +860,7 @@ export class NovaSonicBidirectionalStreamClient {
           interactive: true,
           role: "USER",
           audioInputConfiguration: audioConfig,
+          audioOutputConfiguration: DefaultAudioOutputConfiguration, // 추가된 부분
         },
       }
     });
@@ -822,13 +885,9 @@ export class NovaSonicBidirectionalStreamClient {
       throw new Error(`Invalid session ${sessionId} for audio streaming`);
     }
     
-    console.log('🎵 Streaming audio chunk to Nova Sonic for session:', sessionId); // ✅ 로그 추가
-    console.log('📏 Audio chunk size:', audioData.length, 'bytes'); // ✅ 로그 추가
-    
     // 오디오 데이터가 실제로 전송되면 플래그들을 true로 설정
     if (!session.isAudioContentStartSent) {
       session.isAudioContentStartSent = true;
-      console.log(`[DEBUG] isAudioContentStartSent set to true for session ${sessionId} due to audio data`);
     }
     
     // 실제 오디오 데이터가 전송되었음을 표시
@@ -837,7 +896,6 @@ export class NovaSonicBidirectionalStreamClient {
     // Convert audio to base64
     const base64Data = audioData.toString('base64');
 
-    console.log(' Adding audio event to Nova Sonic queue...'); // ✅ 로그 추가
     this.addEventToSessionQueue(sessionId, {
       event: {
         audioInput: {

@@ -28,7 +28,6 @@ const bedrockClient = new NovaSonicBidirectionalStreamClient({
 // Periodically check for and close inactive sessions (every minute)
 // Sessions with no activity for over 5 minutes will be force closed
 setInterval(() => {
-    console.log("Session cleanup check");
     const now = Date.now();
 
     // Check all active sessions
@@ -37,7 +36,6 @@ setInterval(() => {
 
         // If no activity for 5 minutes, force close
         if (now - lastActivity > 5 * 60 * 1000) {
-            console.log(`Closing inactive session ${sessionId} after 5 minutes of inactivity`);
             try {
                 bedrockClient.forceCloseSession(sessionId);
             } catch (error) {
@@ -62,24 +60,18 @@ io.on('connection', (socket) => {
         const session = bedrockClient.createStreamSession(sessionId);
         bedrockClient.initiateSession(sessionId)
 
-        setInterval(() => {
-            const connectionCount = Object.keys(io.sockets.sockets).length;
-            console.log(`Active socket connections: ${connectionCount}`);
-        }, 60000);
+
 
         // Set up event handlers
         session.onEvent('contentStart', (data) => {
-            console.log('contentStart:', data);
             socket.emit('contentStart', data);
         });
 
         session.onEvent('textOutput', (data) => {
-            console.log('Text output:', data);
             socket.emit('textOutput', data);
         });
 
         session.onEvent('audioOutput', (data) => {
-            console.log('Audio output received, sending to client');
             socket.emit('audioOutput', data);
         });
 
@@ -89,22 +81,18 @@ io.on('connection', (socket) => {
         });
 
         session.onEvent('toolUse', (data) => {
-            console.log('Tool use detected:', data.toolName);
             socket.emit('toolUse', data);
         });
 
         session.onEvent('toolResult', (data) => {
-            console.log('Tool result received');
             socket.emit('toolResult', data);
         });
 
         session.onEvent('contentEnd', (data) => {
-            console.log('Content end received: ', data);
             socket.emit('contentEnd', data);
         });
 
         session.onEvent('streamComplete', () => {
-            console.log('Stream completed for client:', socket.id);
             socket.emit('streamComplete');
         });
 
@@ -130,7 +118,6 @@ io.on('connection', (socket) => {
 
         socket.on('promptStart', async () => {
             try {
-                console.log('Prompt start received');
                 await session.setupPromptStart();
             } catch (error) {
                 console.error('Error processing prompt start:', error);
@@ -143,7 +130,6 @@ io.on('connection', (socket) => {
 
         socket.on('systemPrompt', async (data) => {
             try {
-                console.log('System prompt received', data);
                 await session.setupSystemPrompt(undefined, data);
             } catch (error) {
                 console.error('Error processing system prompt:', error);
@@ -156,7 +142,6 @@ io.on('connection', (socket) => {
 
         socket.on('audioStart', async (data) => {
             try {
-                console.log('Audio start received', data);
                 await session.setupStartAudio();
             } catch (error) {
                 console.error('Error processing audio start:', error);
@@ -169,14 +154,11 @@ io.on('connection', (socket) => {
 
         socket.on('stopAudio', async () => {
             try {
-                console.log('Stop audio requested, beginning proper shutdown sequence');
-
                 // Chain the closing sequence
                 await Promise.all([
                     session.endAudioContent()
                         .then(() => session.endPrompt())
                         .then(() => session.close())
-                        .then(() => console.log('Session cleanup complete'))
                 ]);
             } catch (error) {
                 console.error('Error processing streaming end events:', error);
@@ -189,12 +171,8 @@ io.on('connection', (socket) => {
 
         // Handle disconnection
         socket.on('disconnect', async () => {
-            console.log('Client disconnected abruptly:', socket.id);
-
             if (bedrockClient.isSessionActive(sessionId)) {
                 try {
-                    console.log(`Beginning cleanup for abruptly disconnected session: ${socket.id}`);
-
                     // Add explicit timeouts to avoid hanging promises
                     const cleanupPromise = Promise.race([
                         (async () => {
@@ -208,12 +186,10 @@ io.on('connection', (socket) => {
                     ]);
 
                     await cleanupPromise;
-                    console.log(`Successfully cleaned up session after abrupt disconnect: ${socket.id}`);
                 } catch (error) {
                     console.error(`Error cleaning up session after disconnect: ${socket.id}`, error);
                     try {
                         bedrockClient.forceCloseSession(sessionId);
-                        console.log(`Force closed session: ${sessionId}`);
                     } catch (e) {
                         console.error(`Failed even force close for session: ${sessionId}`, e);
                     }

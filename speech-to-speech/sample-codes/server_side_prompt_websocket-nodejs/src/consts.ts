@@ -21,19 +21,15 @@ export const DefaultToolSchema = JSON.stringify({
   "required": []
 });
 
-export const WeatherToolSchema = JSON.stringify({
+export const ReservationToolSchema = JSON.stringify({
   "type": "object",
   "properties": {
-    "latitude": {
+    "name": {
       "type": "string",
-      "description": "Geographical WGS84 latitude of the location."
-    },
-    "longitude": {
-      "type": "string",
-      "description": "Geographical WGS84 longitude of the location."
+      "description": "Full name of the guest who made the reservation."
     }
   },
-  "required": ["latitude", "longitude"]
+  "required": ["name"]
 });
 
 export const DefaultTextConfiguration = { mediaType: "text/plain" as TextMediaType };

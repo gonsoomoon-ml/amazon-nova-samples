@@ -285,29 +285,34 @@ async function startStreaming() {
     if (isStreaming) return;
 
     try {
+        // 같은 프롬프트로 재시작하는 경우 세션만 재설정
+        if (sessionInitialized) {
+            console.log("Resetting session for same prompt...");
+            
+            // 스트리밍 중이면 먼저 중지
+            if (isStreaming) {
+                stopStreaming();
+            }
+            
+            // 세션 재설정
+            sessionInitialized = false;
+            await initializeSession();
+        }
+
         // First, make sure the session is initialized
         if (!sessionInitialized) {
             await initializeSession();
         }
 
-        // ✅ 여기서만 오디오 처리 시작
-        console.log('🎤 오디오 스트림 생성 중...');
+        // Create audio processor
         sourceNode = audioContext.createMediaStreamSource(audioStream);
-        console.log('✅ MediaStreamSource 생성됨');
-        
-        // 오디오 처리기 설정
+
+        // Use ScriptProcessorNode for audio processing
         if (audioContext.createScriptProcessor) {
-            console.log('🎵 ScriptProcessor 생성 중...');
             processor = audioContext.createScriptProcessor(512, 1, 1);
-            console.log('✅ ScriptProcessor 생성됨');
 
             processor.onaudioprocess = (e) => {
-                if (!isStreaming) {
-                    console.log('🔴 Not streaming, skipping audio processing');
-                    return;
-                }
-
-                console.log('🟢 Processing audio chunk...'); // ✅ 로그 추가
+                if (!isStreaming) return;
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 const numSamples = Math.round(inputData.length / samplingRatio)
@@ -327,21 +332,15 @@ async function startStreaming() {
                 // Convert to base64 (browser-safe way)
                 const base64Data = arrayBufferToBase64(pcmData.buffer);
 
-                console.log('📤 Sending audio data to server...', base64Data.substring(0, 50) + '...'); // ✅ 로그 추가
                 // Send to server
                 socket.emit('audioInput', base64Data);
             };
-            
-            // 오디오 노드 연결
-            console.log('🔗 오디오 노드 연결 중...');
+
             sourceNode.connect(processor);
             processor.connect(audioContext.destination);
-            console.log('✅ 오디오 노드 연결 완료');
-        } else {
-            console.log('❌ ScriptProcessor 지원되지 않음');
         }
 
-        isStreaming = true;  // ✅ 스트리밍 상태 설정
+        isStreaming = true;
         startButton.disabled = true;
         stopButton.disabled = false;
         statusElement.textContent = "Streaming... Speak now";
@@ -673,19 +672,21 @@ socket.on('streamComplete', () => {
 
 // Handle connection status updates
 socket.on('connect', () => {
-    statusElement.textContent = "Connected to server";
-    statusElement.className = "connected";
-    sessionInitialized = false;
+    console.log('Connected to server');
+    statusElement.textContent = "Connected";
+    statusElement.className = "ready";
 });
 
+// 소켓 재연결 로직 추가
 socket.on('disconnect', () => {
-    statusElement.textContent = "Disconnected from server";
-    statusElement.className = "disconnected";
-    startButton.disabled = true;
-    stopButton.disabled = true;
-    sessionInitialized = false;
-    hideUserThinkingIndicator();
-    hideAssistantThinkingIndicator();
+    console.log('Disconnected from server');
+    statusElement.textContent = "Disconnected. Reconnecting...";
+    statusElement.className = "error";
+    
+    // 자동 재연결
+    setTimeout(() => {
+        socket.connect();
+    }, 1000);
 });
 
 // Handle errors

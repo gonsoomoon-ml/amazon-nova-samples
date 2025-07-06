@@ -113,7 +113,7 @@ promptSelect.addEventListener('change', async (event) => {
             window.location.reload();
         }, 1000);
         
-        console.log(`Changed prompt to: ${PROMPTS[currentPrompt].title}, refreshing page...`);
+
     }
 });
 
@@ -149,7 +149,6 @@ async function initAudio() {
 
         //samplingRatio - is only relevant for firefox, for Chromium based browsers, it's always 1
         samplingRatio = audioContext.sampleRate / TARGET_SAMPLE_RATE;
-        console.log(`Debug AudioContext- sampleRate: ${audioContext.sampleRate} samplingRatio: ${samplingRatio}`)
         
 
         await audioPlayer.start();
@@ -454,8 +453,6 @@ function hideAssistantThinkingIndicator() {
 
 // Handle content start from the server
 socket.on('contentStart', (data) => {
-    console.log('Content start received:', data);
-
     if (data.type === 'TEXT') {
         role = data.role;
         if (data.role === 'USER') {
@@ -470,17 +467,9 @@ socket.on('contentStart', (data) => {
                 if (data.additionalModelFields) {
                     const additionalFields = JSON.parse(data.additionalModelFields);
                     isSpeculative = additionalFields.generationStage === "SPECULATIVE";
-                    if (isSpeculative) {
-                        console.log("Received SPECULATIVE content - will display");
-                        displayAssistantText = true;
-                    }
-                    else {
-                        console.log("Received FINAL content - will NOT display");
-                        displayAssistantText = false;
-                    }
+                    displayAssistantText = isSpeculative;
                 }
             } catch (e) {
-                console.error("Error parsing additionalModelFields:", e);
                 displayAssistantText = false; // 파싱 오류 시 표시하지 않음
             }
         }
@@ -494,8 +483,6 @@ socket.on('contentStart', (data) => {
 
 // Handle text output from the server
 socket.on('textOutput', (data) => {
-    console.log('Received text output:', data);
-
     if (role === 'USER') {
         transcriptionReceived = true;
         handleTextOutput({
@@ -529,8 +516,6 @@ socket.on('audioOutput', (data) => {
 
 // Handle content end events
 socket.on('contentEnd', (data) => {
-    console.log('Content end received:', data);
-
     if (data.type === 'TEXT') {
         if (role === 'USER') {
             // When user's text content ends, make sure assistant thinking is shown
@@ -546,7 +531,6 @@ socket.on('contentEnd', (data) => {
         if (data.stopReason && data.stopReason.toUpperCase() === 'END_TURN') {
             chatHistoryManager.endTurn();
         } else if (data.stopReason && data.stopReason.toUpperCase() === 'INTERRUPTED') {
-            console.log("Interrupted by user");
             audioPlayer.bargeIn();
         }
     }
