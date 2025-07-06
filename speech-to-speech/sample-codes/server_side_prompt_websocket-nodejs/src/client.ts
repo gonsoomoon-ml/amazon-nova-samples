@@ -257,6 +257,13 @@ export class NovaSonicBidirectionalStreamClient {
     }
   }
 
+  // Set prompt name for a session
+  public setPromptName(sessionId: string, promptName: string): void {
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      session.promptName = promptName;
+    }
+  }
 
   // Create a new streaming session
   public createStreamSession(sessionId: string = randomUUID(), config?: NovaSonicBidirectionalStreamClientConfig): StreamSession {
@@ -815,6 +822,9 @@ export class NovaSonicBidirectionalStreamClient {
       throw new Error(`Invalid session ${sessionId} for audio streaming`);
     }
     
+    console.log('🎵 Streaming audio chunk to Nova Sonic for session:', sessionId); // ✅ 로그 추가
+    console.log('📏 Audio chunk size:', audioData.length, 'bytes'); // ✅ 로그 추가
+    
     // 오디오 데이터가 실제로 전송되면 플래그들을 true로 설정
     if (!session.isAudioContentStartSent) {
       session.isAudioContentStartSent = true;
@@ -827,6 +837,7 @@ export class NovaSonicBidirectionalStreamClient {
     // Convert audio to base64
     const base64Data = audioData.toString('base64');
 
+    console.log(' Adding audio event to Nova Sonic queue...'); // ✅ 로그 추가
     this.addEventToSessionQueue(sessionId, {
       event: {
         audioInput: {

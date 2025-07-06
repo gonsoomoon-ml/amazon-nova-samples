@@ -41,35 +41,124 @@ let role;
 const audioPlayer = new AudioPlayer();
 let sessionInitialized = false;
 
+// Debug function to check audio context state
+window.debugAudioContext = function() {
+    if (audioContext) {
+        console.log('AudioContext state:', audioContext.state);
+        console.log('AudioContext sample rate:', audioContext.sampleRate);
+        console.log('Is streaming:', isStreaming);
+        console.log('Audio stream active:', audioStream && audioStream.active);
+        return {
+            state: audioContext.state,
+            sampleRate: audioContext.sampleRate,
+            isStreaming: isStreaming,
+            streamActive: audioStream && audioStream.active
+        };
+    } else {
+        console.log('AudioContext not initialized yet');
+        return null;
+    }
+};
+
 let samplingRatio = 1;
 const TARGET_SAMPLE_RATE = 16000; 
 const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
 
-// 프롬프트 정의 및 설명
-const PROMPTS = {
-    friend: {
-        title: "Friend",
-        description: "일반적인 친구와 같은 대화를 하는 프롬프트",
-        prompt: "You are a friendly friend. The user and you will engage in a natural, casual conversation like close friends. Be warm, supportive, and genuinely interested in the user's thoughts and feelings. Share your own thoughts and experiences naturally. Keep responses conversational and engaging, as if you're talking to a good friend."
-    },
-    hotel_assistant_focused: {
-        title: "Hotel Assistant (Focus on Hotel matter)",
-        description: "호텔, 관광 주제와 다르면, 부드럽게 거부하고, 호텔과 관광으로 대화를 유도 하는 프롬프트",
-        prompt: "You are a hotel concierge focused specifically on hotel and tourism matters. If the conversation drifts away from hotel services, travel, tourism, or local attractions, gently redirect it back to these topics. Politely acknowledge other topics but smoothly transition to hotel-related services, local recommendations, or travel assistance. Always maintain professionalism while keeping the focus on hospitality and tourism."
-    },
-    english_tutor: {
-        title: "English Tutor",
-        description: "영어 선생님 프롬프트",
-        prompt: "You are a friendly and encouraging English tutor. Help the user improve their English speaking skills through natural conversation. Gently correct pronunciation and grammar when needed, but focus on communication and confidence building. Provide clear explanations and encourage the user to practice speaking. Be patient, supportive, and create a comfortable learning environment."
-    }
-};
-
-// 현재 프롬프트 (localStorage에서 복원)
+// 프롬프트 데이터를 서버에서 로드
+let PROMPTS = {};  // 여기에 PROMPTS 변수 선언 추가
 let currentPrompt = localStorage.getItem('selectedPrompt') || 'friend';
-let SYSTEM_PROMPT = PROMPTS[currentPrompt].prompt;
+let SYSTEM_PROMPT = '';
+
+// 서버에서 프롬프트 목록과 데이터를 로드하는 함수
+async function loadPromptsFromServer() {
+    try {
+        // 1. 프롬프트 목록 가져오기
+        const response = await fetch('/api/prompts');
+        const promptList = await response.json();
+        console.log('Prompt list from server:', promptList);
+        
+        // 2. 각 프롬프트의 상세 정보 가져오기
+        const promptsData = {};
+        for (const promptName of promptList) {
+            const promptResponse = await fetch(`/api/prompts/${promptName}`);
+            const promptData = await promptResponse.json();
+            promptsData[promptName] = promptData;
+        }
+        
+        PROMPTS = promptsData;
+        
+        // 3. 드롭다운 옵션 업데이트
+        updatePromptDropdown(promptList);
+        
+        // 4. 현재 프롬프트 설정
+        if (PROMPTS[currentPrompt]) {
+            SYSTEM_PROMPT = PROMPTS[currentPrompt].prompt;
+        } else {
+            // 기본값으로 첫 번째 프롬프트 사용
+            const firstPrompt = Object.keys(PROMPTS)[0];
+            currentPrompt = firstPrompt;
+            SYSTEM_PROMPT = PROMPTS[firstPrompt].prompt;
+            localStorage.setItem('selectedPrompt', currentPrompt);
+        }
+        
+        // 5. UI 업데이트
+        updateCurrentPromptInfo();
+        promptSelect.value = currentPrompt;
+        
+        console.log('Loaded prompts:', Object.keys(PROMPTS));
+        
+    } catch (error) {
+        console.error('Error loading prompts from server:', error);
+        // 폴백: 기본 프롬프트 사용
+        PROMPTS = {
+            friend: {
+                title: "Friend",
+                description: "일반적인 친구와 같은 대화를 하는 프롬프트",
+                prompt: "You are a friendly friend. The user and you will engage in a natural, casual conversation like close friends. Be warm, supportive, and genuinely interested in the user's thoughts and feelings. Share your own thoughts and experiences naturally. Keep responses conversational and engaging, as if you're talking to a good friend.",
+                promptName: "friend"
+            }
+        };
+        SYSTEM_PROMPT = PROMPTS.friend.prompt;
+        updateCurrentPromptInfo();
+    }
+}
+
+// 드롭다운 옵션 업데이트 함수
+function updatePromptDropdown(promptList) {
+    // 기존 옵션 제거
+    promptSelect.innerHTML = '';
+    
+    // 새 옵션 추가
+    promptList.forEach(promptName => {
+        const option = document.createElement('option');
+        option.value = promptName;
+        
+        // 더 나은 표시 이름 생성
+        let displayName = promptName;
+        
+        if (PROMPTS[promptName]) {
+            // title이 있고 의미있는 값이면 사용
+            if (PROMPTS[promptName].title && PROMPTS[promptName].title !== 'Identity') {
+                displayName = PROMPTS[promptName].title;
+            } else {
+                // title이 없거나 의미없으면 프롬프트 이름을 기반으로 표시 이름 생성
+                displayName = promptName.split('_').map(word => 
+                    word.charAt(0).toUpperCase() + word.slice(1)
+                ).join(' ');
+            }
+        }
+        
+        option.textContent = displayName;
+        promptSelect.appendChild(option);
+    });
+    
+    console.log('Dropdown updated with', promptList.length, 'prompts');
+}
 
 // 현재 프롬프트 정보 업데이트 함수
 function updateCurrentPromptInfo() {
+    if (!PROMPTS[currentPrompt]) return;
+    
     const promptData = PROMPTS[currentPrompt];
     const titleElement = currentPromptInfo.querySelector('.prompt-title');
     const descriptionElement = currentPromptInfo.querySelector('.prompt-description');
@@ -117,11 +206,8 @@ promptSelect.addEventListener('change', async (event) => {
     }
 });
 
-// 초기 프롬프트 정보 표시
-updateCurrentPromptInfo();
-
-// 드롭다운에 선택된 프롬프트 반영
-promptSelect.value = currentPrompt;
+// 페이지 로드 시 프롬프트 로드
+loadPromptsFromServer();
 
 // Initialize WebSocket audio
 async function initAudio() {
@@ -164,21 +250,30 @@ async function initAudio() {
     }
 }
 
-// Initialize the session with Bedrock
+// Initialize the session with Bedrock (프롬프트 이름과 함께 전달)
 async function initializeSession() {
     if (sessionInitialized) return;
 
     statusElement.textContent = "Initializing session...";
 
     try {
-        // Send events in sequence
-        socket.emit('promptStart');
-        socket.emit('systemPrompt', SYSTEM_PROMPT);
+        // 1. 세션 시작
+        socket.emit('startSession');
+        
+        // 2. 프롬프트 설정
+        socket.emit('promptStart', {
+            promptName: currentPrompt
+        });
+        socket.emit('systemPrompt', {
+            prompt: SYSTEM_PROMPT,
+            promptName: currentPrompt
+        });
         socket.emit('audioStart');
 
         // Mark session as initialized
         sessionInitialized = true;
         statusElement.textContent = "Session initialized successfully";
+        console.log('Session initialized with prompt:', currentPrompt);
     } catch (error) {
         console.error("Failed to initialize session:", error);
         statusElement.textContent = "Error initializing session";
@@ -195,15 +290,24 @@ async function startStreaming() {
             await initializeSession();
         }
 
-        // Create audio processor
+        // ✅ 여기서만 오디오 처리 시작
+        console.log('🎤 오디오 스트림 생성 중...');
         sourceNode = audioContext.createMediaStreamSource(audioStream);
-
-        // Use ScriptProcessorNode for audio processing
+        console.log('✅ MediaStreamSource 생성됨');
+        
+        // 오디오 처리기 설정
         if (audioContext.createScriptProcessor) {
+            console.log('🎵 ScriptProcessor 생성 중...');
             processor = audioContext.createScriptProcessor(512, 1, 1);
+            console.log('✅ ScriptProcessor 생성됨');
 
             processor.onaudioprocess = (e) => {
-                if (!isStreaming) return;
+                if (!isStreaming) {
+                    console.log('🔴 Not streaming, skipping audio processing');
+                    return;
+                }
+
+                console.log('🟢 Processing audio chunk...'); // ✅ 로그 추가
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 const numSamples = Math.round(inputData.length / samplingRatio)
@@ -212,11 +316,6 @@ async function startStreaming() {
                 // Convert to 16-bit PCM
                 if (isFirefox) {                    
                     for (let i = 0; i < inputData.length; i++) {
-                        //NOTE: for firefox the samplingRatio is not 1, 
-                        // so it will downsample by skipping some input samples
-                        // A better approach is to compute the mean of the samplingRatio samples.
-                        // or pass through a low-pass filter first 
-                        // But skipping is a preferable low-latency operation
                         pcmData[i] = Math.max(-1, Math.min(1, inputData[i * samplingRatio])) * 0x7FFF;
                     }
                 } else {
@@ -224,20 +323,25 @@ async function startStreaming() {
                         pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
                     }
                 }
-                
 
                 // Convert to base64 (browser-safe way)
                 const base64Data = arrayBufferToBase64(pcmData.buffer);
 
+                console.log('📤 Sending audio data to server...', base64Data.substring(0, 50) + '...'); // ✅ 로그 추가
                 // Send to server
                 socket.emit('audioInput', base64Data);
             };
-
+            
+            // 오디오 노드 연결
+            console.log('🔗 오디오 노드 연결 중...');
             sourceNode.connect(processor);
             processor.connect(audioContext.destination);
+            console.log('✅ 오디오 노드 연결 완료');
+        } else {
+            console.log('❌ ScriptProcessor 지원되지 않음');
         }
 
-        isStreaming = true;
+        isStreaming = true;  // ✅ 스트리밍 상태 설정
         startButton.disabled = true;
         stopButton.disabled = false;
         statusElement.textContent = "Streaming... Speak now";

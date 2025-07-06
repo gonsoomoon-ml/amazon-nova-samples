@@ -5,6 +5,7 @@ import { Server } from 'socket.io';
 import { fromIni } from "@aws-sdk/credential-providers";
 import { NovaSonicBidirectionalStreamClient } from './client';
 import { Buffer } from 'node:buffer';
+import { readFileSync, readdirSync } from 'fs';
 
 // Configure AWS credentials
 const AWS_PROFILE_NAME = process.env.AWS_PROFILE || 'bedrock-test';
@@ -13,6 +14,69 @@ const AWS_PROFILE_NAME = process.env.AWS_PROFILE || 'bedrock-test';
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
+// 프롬프트 관리 시스템
+class PromptManager {
+    private promptsPath = path.join(__dirname, '../public/prompts');
+
+    public getPromptList(): string[] {
+        try {
+            const files = readdirSync(this.promptsPath);
+            return files
+                .filter(file => file.endsWith('.md'))
+                .map(file => file.replace('.md', ''));
+        } catch (error) {
+            console.error('Error reading prompts directory:', error);
+            return [];
+        }
+    }
+
+    public getPromptContent(promptName: string): string | null {
+        try {
+            const filePath = path.join(this.promptsPath, `${promptName}.md`);
+            return readFileSync(filePath, 'utf-8');
+        } catch (error) {
+            console.error(`Error reading prompt ${promptName}:`, error);
+            return null;
+        }
+    }
+
+    public parsePromptMetadata(content: string): { title: string; description: string; prompt: string } {
+        const lines = content.split('\n');
+        let title = '';
+        let description = '';
+        let prompt = '';
+
+        // 첫 번째 줄에서 제목 추출
+        if (lines[0].startsWith('# ')) {
+            title = lines[0].substring(2).trim();
+        }
+
+        // description 줄 찾기
+        for (let i = 1; i < lines.length; i++) {
+            if (lines[i].startsWith('description:')) {
+                description = lines[i].substring(12).trim();
+                break;
+            }
+        }
+
+        // 첫 번째 빈 줄 이후의 내용을 프롬프트로 사용
+        let promptStartIndex = 0;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].trim() === '' && i > 0) {
+                promptStartIndex = i + 1;
+                break;
+            }
+        }
+
+        prompt = lines.slice(promptStartIndex).join('\n').trim();
+
+        return { title, description, prompt };
+    }
+}
+
+// 프롬프트 매니저 인스턴스 생성
+const promptManager = new PromptManager();
 
 // Create the AWS Bedrock client
 const bedrockClient = new NovaSonicBidirectionalStreamClient({
@@ -50,6 +114,48 @@ setInterval(() => {
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, '../public')));
 
+// 프롬프트 API 엔드포인트 - any 타입으로 우회
+app.get('/api/prompts', (req: any, res: any) => {
+    try {
+        const promptList = promptManager.getPromptList();
+        console.log('Available prompts:', promptList);
+        res.json(promptList);
+    } catch (error) {
+        console.error('Error getting prompt list:', error);
+        res.status(500).json({ error: 'Failed to get prompt list' });
+    }
+});
+
+app.get('/api/prompts/:name', (req: any, res: any) => {
+    try {
+        const promptName = req.params.name;
+        const content = promptManager.getPromptContent(promptName);
+        
+        if (!content) {
+            return res.status(404).json({ error: 'Prompt not found' });
+        }
+
+        const metadata = promptManager.parsePromptMetadata(content);
+        
+        // 프롬프트 이름을 응답에 포함
+        const response = {
+            ...metadata,
+            promptName: promptName  // 프롬프트 이름 추가
+        };
+        
+        console.log(`Prompt ${promptName}:`, metadata);
+        res.json(response);
+    } catch (error) {
+        console.error('Error getting prompt content:', error);
+        res.status(500).json({ error: 'Failed to get prompt content' });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req: any, res: any) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Socket.IO connection handler
 io.on('connection', (socket) => {
     console.log('New client connected:', socket.id);
@@ -60,7 +166,7 @@ io.on('connection', (socket) => {
     try {
         // Create session with the new API
         const session = bedrockClient.createStreamSession(sessionId);
-        bedrockClient.initiateSession(sessionId)
+        // bedrockClient.initiateSession(sessionId)  // ❌ 이 줄 제거
 
         setInterval(() => {
             const connectionCount = Object.keys(io.sockets.sockets).length;
@@ -111,16 +217,20 @@ io.on('connection', (socket) => {
         // Simplified audioInput handler without rate limiting
         socket.on('audioInput', async (audioData) => {
             try {
+                console.log('🎤 Audio input received from client:', socket.id); // ✅ 로그 추가
+                console.log('📊 Audio data length:', typeof audioData === 'string' ? audioData.length : audioData.byteLength); // ✅ 로그 추가
+                
                 // Convert base64 string to Buffer
                 const audioBuffer = typeof audioData === 'string'
                     ? Buffer.from(audioData, 'base64')
                     : Buffer.from(audioData);
 
+                console.log(' Streaming audio to Nova Sonic...'); // ✅ 로그 추가
                 // Stream the audio
                 await session.streamAudio(audioBuffer);
 
             } catch (error) {
-                console.error('Error processing audio:', error);
+                console.error('❌ Error processing audio:', error);
                 socket.emit('error', {
                     message: 'Error processing audio',
                     details: error instanceof Error ? error.message : String(error)
@@ -128,9 +238,15 @@ io.on('connection', (socket) => {
             }
         });
 
-        socket.on('promptStart', async () => {
+        socket.on('promptStart', async (data) => {  // ✅ data 매개변수 추가
             try {
-                console.log('Prompt start received');
+                console.log('Prompt start received', data);
+                
+                // promptName을 세션에 설정
+                if (data && data.promptName) {
+                    bedrockClient.setPromptName(sessionId, data.promptName);
+                }
+                
                 await session.setupPromptStart();
             } catch (error) {
                 console.error('Error processing prompt start:', error);
@@ -144,7 +260,14 @@ io.on('connection', (socket) => {
         socket.on('systemPrompt', async (data) => {
             try {
                 console.log('System prompt received', data);
-                await session.setupSystemPrompt(undefined, data);
+                
+                // promptName을 세션에 설정
+                if (data.promptName) {
+                    bedrockClient.setPromptName(sessionId, data.promptName);
+                }
+                
+                // prompt 문자열만 전달
+                await session.setupSystemPrompt(undefined, data.prompt);
             } catch (error) {
                 console.error('Error processing system prompt:', error);
                 socket.emit('error', {
@@ -182,6 +305,20 @@ io.on('connection', (socket) => {
                 console.error('Error processing streaming end events:', error);
                 socket.emit('error', {
                     message: 'Error processing streaming end events',
+                    details: error instanceof Error ? error.message : String(error)
+                });
+            }
+        });
+
+        // 새로운 이벤트: 세션 시작
+        socket.on('startSession', async () => {
+            try {
+                console.log('Starting session for:', sessionId);
+                await bedrockClient.initiateSession(sessionId);
+            } catch (error) {
+                console.error('Error starting session:', error);
+                socket.emit('error', {
+                    message: 'Error starting session',
                     details: error instanceof Error ? error.message : String(error)
                 });
             }
@@ -236,16 +373,15 @@ io.on('connection', (socket) => {
     }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
 // Start the server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`Open http://localhost:${PORT} in your browser to access the application`);
+    console.log(`API endpoints:`);
+    console.log(`  GET /api/prompts - Get list of available prompts`);
+    console.log(`  GET /api/prompts/:name - Get specific prompt content`);
+    console.log(`  GET /health - Health check`);
 });
 
 process.on('SIGINT', async () => {
