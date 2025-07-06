@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Audio Streaming to Bedrock</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/src/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- 2단 레이아웃 컨테이너 -->
+        <div class="layout-container">
+            <!-- 왼쪽 패널: 설정 및 프롬프트 -->
+            <div class="left-panel">
+                <div class="panel-header">
+                    <h2>Amazon Nova Sonic Settings</h2>
+                </div>
+                
+                <!-- 연결 상태 -->
+                <div class="settings-section">
+                    <h3>Connection Status</h3>
+                    <div id="status" class="disconnected">Disconnected</div>
+                </div>
+                
+                <!-- 메뉴 구분선 -->
+                <div class="menu-separator"></div>
+                
+                <!-- 프롬프트 선택 -->
+                <div class="settings-section">
+                    <h3>AI Assistant</h3>
+                    <div id="prompt-selector">
+                        <label for="prompt-select">Select Assistant:</label>
+                        <select id="prompt-select" class="prompt-dropdown">
+                            <option value="friend">Friend</option>
+                            <option value="hotel_assistant_focused">Hotel Assistant (Focus on Hotel matter)</option>
+                            <option value="english_tutor">English Tutor</option>
+                        </select>
+                    </div>
+                    
+                    <!-- 현재 프롬프트 정보 -->
+                    <div id="current-prompt-info">
+                        <div class="prompt-title">Friend</div>
+                        <div class="prompt-description">일반적인 친구와 같은 대화를 하는 프롬프트</div>
+                    </div>
+                </div>
+                
+                <!-- 메뉴 구분선 -->
+                <div class="menu-separator"></div>
+                
+                <!-- 음성 제어 -->
+                <div class="settings-section">
+                    <h3>Voice Controls</h3>
+                    <div class="control-buttons">
+                        <button id="start" class="control-btn start-btn" disabled>Start Streaming</button>
+                        <button id="stop" class="control-btn stop-btn" disabled>Stop Streaming</button>
+                    </div>
+                </div>
+                
+                <!-- 향후 확장을 위한 공간 -->
+                <!-- <div class="menu-separator"></div>
+                <div class="settings-section">
+                    <h3>Additional Settings</h3>
+                    <p style="color: #666; font-size: 11px; margin: 0;">Future menu items will appear here</p>
+                </div> -->
+            </div>
+            
+            <!-- 오른쪽 패널: 대화 -->
+            <div class="right-panel">
+                <div class="panel-header">
+                    <h2>Conversation</h2>
+                </div>
+                <div id="chat-container"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
